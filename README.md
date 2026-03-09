@@ -1,211 +1,329 @@
 # CredPal DevOps Assessment
 
-This repository contains a production-oriented DevOps solution for a basic Node.js web application.
+This repository contains a production-ready DevOps implementation for a simple Node.js web application built as part of the CredPal DevOps Engineer assessment.
 
-## Features
+The solution demonstrates:
 
-- Node.js app with 3 endpoints:
-  - `GET /health`
-  - `GET /status`
-  - `POST /process`
-- Docker multi-stage build
-- Non-root container user
-- Redis service with Docker Compose
-- GitHub Actions CI and deployment workflow
-- Terraform infrastructure on AWS using:
-  - VPC
-  - public/private subnets
-  - security groups
-  - ECS Fargate
-  - Application Load Balancer
-  - ACM certificate for HTTPS
-  - Route 53 DNS record
-- Rolling deployment with ECS
-- Manual approval for production through GitHub environment protection
-- Logging to CloudWatch and health checks via ALB/ECS
+- Containerization using a secure multi-stage Docker build
+- Local orchestration using Docker Compose (App + Redis)
+- Continuous Integration using GitHub Actions
+- Container image publishing to GitHub Container Registry (GHCR)
+- Infrastructure provisioning using Terraform on AWS
+- HTTPS-enabled deployment behind an Application Load Balancer
+- Zero-downtime deployment using ECS rolling updates
+- Secure runtime configuration and container hardening
+- Basic logging and health monitoring
 
-## Application endpoints
+---
 
-### Health
+# 1. Application Overview
+
+The application runs on **port 3000** and exposes three endpoints:
+
+- `GET /health`
+- `GET /status`
+- `POST /process`
+
+Redis is used for lightweight state tracking during local development.
+
+## Endpoints
+
+### GET /health
+
+Used for container, ECS, and load balancer health checks.
+
 ```bash
 curl http://localhost:3000/health
-````
+```
 
-### Status
+---
+
+### GET /status
+
+Returns service status and processed request count.
 
 ```bash
 curl http://localhost:3000/status
 ```
 
-### Process
+---
+
+### POST /process
+
+Accepts a JSON payload and increments a counter stored in Redis.
 
 ```bash
 curl -X POST http://localhost:3000/process \
   -H "Content-Type: application/json" \
-  -d '{"job":"sample"}'
+  -d '{"task":"demo"}'
 ```
 
-## Run locally
+---
 
-### 1. Copy env file
+# 2. How to Run the Application Locally
 
-```bash
-cp .env.example .env
-```
+## Prerequisites
 
-### 2. Start with Docker Compose
+- Docker Desktop (WSL integration enabled if using WSL)
+- Docker Compose
+
+## Start the Application
+
+From the project root:
 
 ```bash
 docker compose up --build
 ```
 
-### 3. Access the app
+This starts:
 
-* App: `http://localhost:3000`
-* Redis: `localhost:6379`
+- Node.js application on port `3000`
+- Redis on port `6379`
 
-## Run tests
+## Access the Application
 
-```bash
-npm ci
-npm test
+Open in browser:
+
+```
+http://localhost:3000
 ```
 
-## Build Docker image
+Or test with curl:
 
 ```bash
-docker build -t credpal-app:local .
+curl http://localhost:3000/health
+curl http://localhost:3000/status
 ```
 
-## Deploy infrastructure
+---
 
-### Prerequisites
+# 3. How to Deploy the Application
 
-* AWS account
-* Route 53 hosted zone
-* Terraform installed
-* Remote state bucket + DynamoDB lock table
+Infrastructure is provisioned using Terraform on AWS.
 
-### Steps
+## Prerequisites
+
+- AWS account
+- Terraform installed
+- AWS CLI configured
+- (Optional) Route 53 hosted zone for custom domain
+
+## Step 1 – Provision Infrastructure
 
 ```bash
 cd terraform
-cp terraform.tfvars.example terraform.tfvars
-# edit values
 terraform init
-terraform fmt
 terraform validate
 terraform plan
 terraform apply
 ```
 
-After apply, note these outputs:
+Terraform provisions:
 
-* `ecr_repository_url`
-* `ecs_cluster_name`
-* `ecs_service_name`
-* `ecs_task_definition_family`
-* `app_url`
+- VPC
+- Public and private subnets
+- Security groups
+- ECS Cluster (Fargate)
+- ECS Service
+- Application Load Balancer
+- Target group
+- ACM SSL certificate
+- (Optional) Route 53 DNS record
 
-Store the required values as GitHub Actions secrets.
+## Step 2 – Deploy Application
 
-## CI/CD design
+Deployment is handled via GitHub Actions.
 
-### CI pipeline
+1. Push changes to `main`
+2. Trigger the deployment workflow
+3. Approve production deployment (manual approval required)
+4. ECS performs rolling deployment
+
+After deployment, access the app via:
+
+- ALB DNS name
+- Or custom HTTPS domain
+
+Example:
+
+```
+https://your-domain.com
+```
+
+---
+
+# 4. CI/CD Design
+
+GitHub Actions is used for Continuous Integration and Deployment.
+
+## CI Pipeline
 
 Triggered on:
 
-* push to `main`
-* pull requests to `main`
+- Push to `main`
+- Pull request to `main`
 
-It performs:
+The pipeline performs:
 
-* dependency installation
-* unit tests
-* image build
-* image push on main
+1. Checkout code
+2. Install dependencies using `npm ci`
+3. Run unit tests using `npm test`
+4. Build Docker image
+5. Push image to GitHub Container Registry (GHCR) on push to `main`
 
-### Deployment pipeline
-
-Triggered manually via `workflow_dispatch`.
-Uses:
-
-* GitHub protected production environment for manual approval
-* ECS rolling deployment with service stability checks
-
-## Security decisions
-
-* No application secrets stored in code or GitHub workflow files
-* Secrets are expected through GitHub Actions secrets or AWS-managed secret stores
-* Container runs as non-root user
-* ALB terminates TLS using ACM certificate
-* Application runs in private subnets on ECS Fargate
-* Security groups restrict traffic so only the ALB can reach the app
-* Terraform state is intended to be stored remotely in encrypted S3 with DynamoDB locking
-
-## Observability decisions
-
-* Application logs to stdout/stderr
-* ECS forwards container logs to CloudWatch Logs
-* `/health` endpoint used for health checking
-* ALB target group health check configured against `/health`
-
-## Zero-downtime deployment
-
-* ECS service uses rolling deployment
-* `deployment_minimum_healthy_percent = 100`
-* `deployment_maximum_percent = 200`
-* ALB routes traffic only to healthy tasks
-
-## Possible improvements
-
-* Add WAF in front of ALB
-* Use AWS Secrets Manager or SSM Parameter Store for runtime secrets
-PORT=3000
-* Add structured JSON logging
-* Add CloudWatch alarms and SNS notifications
-* Add autoscaling policies for ECS service
-* Add Redis as ElastiCache instead of local Compose-only Redis
+Image format:
 
 ```
-
-  try {
----
-const port = process.env.PORT || 3000;
-
-FROM node:20-alpine AS deps
-# 6) What to say about the design
-node_modules
-
-version: "3.9"
-Use this wording in the README and interview discussion:
-
-- **Containerization:** I used a multi-stage Docker build to keep the runtime image small and secure. The container runs as a non-root user and includes a health check.
-- **CI/CD:** I split CI and deployment logically. CI validates every pull request and push to main. Deployment is manual to production through a protected GitHub environment.
-- **Infrastructure:** I chose ECS Fargate behind an ALB because it is simpler and more production-ready than a single EC2 instance for a small service, while still meeting the load balancer and HTTPS requirements.
-- **Zero downtime:** ECS rolling deployment plus ALB health checks ensures new tasks become healthy before old tasks are drained.
-- **Security:** Secrets are not committed to the repository. Runtime secrets are intended to come from GitHub Secrets or AWS-managed secret stores.
-
----
-
-# 7) Submission tips
-
-Before submitting:
-
-1. Make sure the repo is clean and copy-paste runnable.
-2. Replace placeholder values in Terraform and README.
-3. Add screenshots if you want extra polish:
-   - successful GitHub Action run
-   - ECS service healthy
-   - ALB / app response
-4. Do not overcomplicate beyond what you can explain confidently.
-
----
-
-# 8) Honest gaps you can mention if needed
-
-This sample solution uses Redis only for local Compose support. In a real production deployment, Redis should be replaced with ElastiCache or another managed datastore.    
-That is a reasonable and professional design decision to mention explicitly.
-
+ghcr.io/<github-username>/credpal-devops-assessment
 ```
 
+GHCR was chosen to avoid managing separate Docker Hub credentials and to integrate seamlessly with GitHub Actions.
+
+## Deployment Pipeline
+
+- Triggered manually (`workflow_dispatch`)
+- Protected by GitHub `production` environment
+- Requires manual approval before execution
+- Updates ECS task definition with new image version
+
+This satisfies the requirement for manual approval before production deployment.
+
+---
+
+# 5. Zero-Downtime Deployment Strategy
+
+Zero downtime is achieved using:
+
+- ECS rolling deployment
+- Desired task count ≥ 2
+- ALB health checks on `/health`
+- Deployment settings:
+  - `minimum_healthy_percent = 100`
+  - `maximum_percent = 200`
+
+Deployment flow:
+
+1. New task version is launched.
+2. ALB health checks validate new tasks.
+3. Traffic is routed only to healthy tasks.
+4. Old tasks are drained and stopped.
+
+Users never experience downtime during deployment.
+
+---
+
+# 6. Security Decisions
+
+## Secrets Management
+
+- No application secrets are committed to the repository.
+- Runtime secrets are intended to be stored in:
+  - AWS Secrets Manager, or
+  - AWS SSM Parameter Store
+- Secrets are injected into ECS task definitions at runtime.
+- No long-lived AWS credentials are stored in code.
+
+## Container Security
+
+- Multi-stage Docker build reduces attack surface.
+- Application runs as a **non-root user** inside the container.
+- Only required runtime files are included in final image.
+- Docker HEALTHCHECK is implemented.
+
+## Network Security
+
+- Only ALB is publicly accessible (ports 80/443).
+- ECS tasks accept traffic only from ALB security group.
+- No direct public access to containers.
+
+## HTTPS
+
+- TLS termination handled by Application Load Balancer.
+- SSL certificate provisioned via AWS Certificate Manager (ACM).
+
+---
+
+# 7. Infrastructure Design Decisions
+
+## Why ECS Fargate?
+
+ECS Fargate was selected instead of EC2 because:
+
+- No server management required
+- Built-in rolling deployments
+- Simplified scaling
+- Cleaner production-ready container orchestration
+
+## Why Application Load Balancer?
+
+- Enables HTTPS
+- Provides health checks
+- Supports zero-downtime routing
+- Distributes traffic across tasks
+
+## Why Multi-Stage Docker Build?
+
+- Smaller runtime image
+- Clear separation of build and runtime layers
+- Reduced security exposure
+
+---
+
+# 8. Observability
+
+## Logging
+
+The application logs:
+
+- Server startup events
+- HTTP request logs (via Morgan)
+- Errors and Redis connectivity issues
+
+Logs are written to stdout/stderr.
+
+In ECS, logs are forwarded to CloudWatch Logs.
+
+## Health Monitoring
+
+Health validation exists at multiple layers:
+
+- Application endpoint `/health`
+- Docker container HEALTHCHECK
+- ALB target group health check
+- ECS service health validation
+
+---
+
+# 9. Local vs Production Architecture
+
+## Local Development
+
+- Docker Compose
+- Node.js container
+- Redis container
+
+## Production
+
+- ECS Fargate
+- Application Load Balancer (HTTPS)
+- ACM certificate
+- Secrets Manager for runtime secrets
+
+Redis is used locally for simplicity.  
+In production, a managed service such as Amazon ElastiCache would be recommended if persistence or scaling were required.
+
+---
+
+# 10. Summary
+
+This implementation demonstrates:
+
+- Secure containerization
+- Automated CI/CD
+- Infrastructure as Code using Terraform
+- HTTPS-enabled cloud deployment
+- Rolling, zero-downtime deployments
+- Secure secret handling practices
+- Basic logging and health monitoring
+
+The solution focuses on clarity, production readiness, and alignment with modern DevOps best practices while keeping the application intentionally simple.

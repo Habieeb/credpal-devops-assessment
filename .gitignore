@@ -1,0 +1,8 @@
+node_modules
+.env
+coverage
+npm-debug.log
+.DS_Store
+terraform/.terraform
+terraform/*.tfstate
+terraform/*.tfstate.*

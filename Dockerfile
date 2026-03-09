@@ -1,3 +1,15 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm test
+
 FROM node:20-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production

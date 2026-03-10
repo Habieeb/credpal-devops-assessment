@@ -10,34 +10,40 @@ app.use(helmet());
 app.use(express.json());
 app.use(morgan("combined"));
 
-app.get("/health", async (_req, res) => {
-  try {
-    const redis = await getRedisClient();
-    await redis.ping();
+app.get("/", (_req, res) => {
+  return res.status(200).json({
+    message: "CredPal DevOps assessment app is running",
+    endpoints: ["/health", "/status", "/process"]
+  });
+});
 
-    return res.status(200).json({
-      status: "ok",
-      service: "credpal-app",
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    return res.status(500).json({
-      status: "error",
-      message: "Health check failed",
-      error: error.message
-    });
-  }
+app.get("/health", (_req, res) => {
+  return res.status(200).json({
+    status: "ok",
+    service: "credpal-app",
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.get("/status", async (_req, res) => {
   try {
-    const redis = await getRedisClient();
-    const processed = await redis.get("processed_count");
+    let processed = 0;
+    let redis_status = "unavailable";
+
+    try {
+      const redis = await getRedisClient();
+      processed = Number((await redis.get("processed_count")) || 0);
+      redis_status = "connected";
+    } catch (_err) {
+      processed = 0;
+      redis_status = "unavailable";
+    }
 
     return res.status(200).json({
       status: "running",
       uptime_seconds: process.uptime(),
-      processed_count: Number(processed || 0),
+      processed_count: processed,
+      redis_status,
       environment: process.env.NODE_ENV || "development"
     });
   } catch (error) {
@@ -74,4 +80,3 @@ app.post("/process", async (req, res) => {
 });
 
 module.exports = app;
-

@@ -25,11 +25,6 @@ resource "aws_iam_role" "ec2_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "ecr_readonly" {
-  role       = aws_iam_role.ec2_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-}
-
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "${local.name}-instance-profile"
   role = aws_iam_role.ec2_role.name
@@ -80,7 +75,7 @@ resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.app.arn
   port              = 443
   protocol          = "HTTPS"
-  certificate_arn   = aws_acm_certificate_validation.cert.certificate_arn
+  certificate_arn   = aws_acm_certificate.cert.arn
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
   default_action {
@@ -98,23 +93,28 @@ resource "aws_launch_template" "app" {
     name = aws_iam_instance_profile.ec2_profile.name
   }
 
-  vpc_security_group_ids = [aws_security_group.ecs.id]
+  vpc_security_group_ids = [aws_security_group.ec2.id]
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
+    set -euxo pipefail
+
     dnf update -y
     dnf install -y docker
     systemctl enable docker
     systemctl start docker
 
-    aws ecr get-login-password --region ${var.aws_region} | docker login --username AWS --password-stdin ${aws_ecr_repository.app.repository_url}
+    docker pull ghcr.io/habieeb/credpal-devops-assessment:latest
+
+    docker rm -f app || true
 
     docker run -d \
       --name app \
+      --restart unless-stopped \
       -p ${var.container_port}:${var.container_port} \
       -e PORT=${var.container_port} \
       -e NODE_ENV=production \
-      ${aws_ecr_repository.app.repository_url}:latest
+      ghcr.io/habieeb/credpal-devops-assessment:latest
   EOF
   )
 }
@@ -148,20 +148,7 @@ resource "aws_autoscaling_group" "app" {
       min_healthy_percentage = 50
     }
 
-    triggers = ["launch_template"]
   }
 
   depends_on = [aws_lb_listener.https]
-}
-
-resource "aws_route53_record" "app" {
-  zone_id = data.aws_route53_zone.selected.zone_id
-  name    = var.domain_name
-  type    = "A"
-
-  alias {
-    name                   = aws_lb.app.dns_name
-    zone_id                = aws_lb.app.zone_id
-    evaluate_target_health = true
-  }
 }

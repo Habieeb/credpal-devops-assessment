@@ -4,15 +4,16 @@ This repository contains a production-ready DevOps implementation for a simple N
 
 The solution demonstrates:
 
-- Containerization using a secure multi-stage Docker build
-- Local orchestration using Docker Compose (App + Redis)
-- Continuous Integration using GitHub Actions
-- Container image publishing to GitHub Container Registry (GHCR)
-- Infrastructure provisioning using Terraform on AWS
-- HTTPS-enabled deployment behind an Application Load Balancer
-- Zero-downtime deployment using ECS rolling updates
-- Secure runtime configuration and container hardening
-- Basic logging and health monitoring
+- Secure containerization using a multi-stage Docker build  
+- Local orchestration using Docker Compose (Application + Redis)  
+- Continuous Integration using GitHub Actions  
+- Container image publishing to GitHub Container Registry (GHCR)  
+- Infrastructure provisioning using Terraform on AWS  
+- HTTPS-enabled deployment behind an Application Load Balancer (ALB)  
+- Zero-downtime deployment using EC2 Auto Scaling rolling instance refresh  
+- Manual approval before production deployment  
+- Secure container hardening and runtime configuration  
+- Basic logging and health monitoring  
 
 ---
 
@@ -24,23 +25,25 @@ The application runs on **port 3000** and exposes three endpoints:
 - `GET /status`
 - `POST /process`
 
-Redis is used for lightweight state tracking during local development.
+Redis is used locally for lightweight state tracking.
 
 ## Endpoints
 
 ### GET /health
 
-Used for container, ECS, and load balancer health checks.
+Used for container and load balancer health checks.
 
 ```bash
 curl http://localhost:3000/health
 ```
 
+Returns application health and validates Redis connectivity.
+
 ---
 
 ### GET /status
 
-Returns service status and processed request count.
+Returns service uptime and processed request count.
 
 ```bash
 curl http://localhost:3000/status
@@ -64,7 +67,7 @@ curl -X POST http://localhost:3000/process \
 
 ## Prerequisites
 
-- Docker Desktop (WSL integration enabled if using WSL)
+- Docker Desktop (with WSL integration if using WSL)
 - Docker Compose
 
 ## Start the Application
@@ -88,7 +91,7 @@ Open in browser:
 http://localhost:3000
 ```
 
-Or test with curl:
+Or test via curl:
 
 ```bash
 curl http://localhost:3000/health
@@ -97,58 +100,22 @@ curl http://localhost:3000/status
 
 ---
 
-# 3. How to Deploy the Application
+# 3. Containerization Design
 
-Infrastructure is provisioned using Terraform on AWS.
+The Dockerfile uses a **multi-stage build**:
 
-## Prerequisites
+- `deps` stage – installs production dependencies  
+- `builder` stage – installs dev dependencies and runs tests  
+- `runtime` stage – contains only production code  
 
-- AWS account
-- Terraform installed
-- AWS CLI configured
-- (Optional) Route 53 hosted zone for custom domain
+Security best practices implemented:
 
-## Step 1 – Provision Infrastructure
+- Runs as a **non-root user**
+- Minimal runtime image
+- Explicit `HEALTHCHECK`
+- Dev dependencies excluded from runtime image
 
-```bash
-cd terraform
-terraform init
-terraform validate
-terraform plan
-terraform apply
-```
-
-Terraform provisions:
-
-- VPC
-- Public and private subnets
-- Security groups
-- ECS Cluster (Fargate)
-- ECS Service
-- Application Load Balancer
-- Target group
-- ACM SSL certificate
-- (Optional) Route 53 DNS record
-
-## Step 2 – Deploy Application
-
-Deployment is handled via GitHub Actions.
-
-1. Push changes to `main`
-2. Trigger the deployment workflow
-3. Approve production deployment (manual approval required)
-4. ECS performs rolling deployment
-
-After deployment, access the app via:
-
-- ALB DNS name
-- Or custom HTTPS domain
-
-Example:
-
-```
-https://your-domain.com
-```
+The container exposes port 3000 and includes a Docker `HEALTHCHECK` that verifies the `/health` endpoint.
 
 ---
 
@@ -163,13 +130,13 @@ Triggered on:
 - Push to `main`
 - Pull request to `main`
 
-The pipeline performs:
+Pipeline steps:
 
-1. Checkout code
-2. Install dependencies using `npm ci`
-3. Run unit tests using `npm test`
-4. Build Docker image
-5. Push image to GitHub Container Registry (GHCR) on push to `main`
+1. Checkout repository  
+2. Install dependencies using `npm ci`  
+3. Run unit tests (`npm test`)  
+4. Build Docker image  
+5. Push image to GitHub Container Registry (GHCR) on push to `main`  
 
 Image format:
 
@@ -177,153 +144,223 @@ Image format:
 ghcr.io/<github-username>/credpal-devops-assessment
 ```
 
-GHCR was chosen to avoid managing separate Docker Hub credentials and to integrate seamlessly with GitHub Actions.
+GHCR was selected because:
+
+- Native integration with GitHub Actions  
+- No need for separate Docker Hub credentials  
+- Simplified authentication model  
 
 ## Deployment Pipeline
 
-- Triggered manually (`workflow_dispatch`)
-- Protected by GitHub `production` environment
-- Requires manual approval before execution
-- Updates ECS task definition with new image version
+Deployment is handled by a separate GitHub Actions workflow:
 
-This satisfies the requirement for manual approval before production deployment.
+- Triggered manually (`workflow_dispatch`)
+- Uses GitHub `production` environment
+- Requires manual approval before execution
+- Runs Terraform to apply infrastructure changes
+
+This satisfies the requirement for controlled production deployment with manual approval.
 
 ---
 
-# 5. Zero-Downtime Deployment Strategy
+# 5. Infrastructure Architecture (Terraform on AWS)
+
+Infrastructure is provisioned using Terraform.
+
+## Provisioned Components
+
+- VPC  
+- Public and private subnets  
+- Internet Gateway  
+- NAT Gateway (for private subnet outbound access)  
+- Security Groups  
+- EC2 Launch Template  
+- Auto Scaling Group (ASG)  
+- Application Load Balancer (ALB)  
+- Target Group  
+- ACM SSL certificate  
+
+## Architecture Overview
+
+- ALB runs in **public subnets**
+- EC2 instances run in **private subnets**
+- Only ALB is publicly accessible
+- EC2 instances pull container images from GHCR
+- Docker runs the container on port 3000
+- ALB forwards HTTPS traffic to instances
+
+This ensures controlled network exposure and separation of public and private layers.
+
+---
+
+# 6. How to Deploy the Application
+
+## Prerequisites
+
+- AWS account  
+- AWS CLI installed and configured  
+- Terraform installed  
+
+## Step 1 – Provision Infrastructure
+
+```bash
+cd terraform
+terraform init
+terraform validate
+terraform plan
+terraform apply
+```
+
+Terraform provisions the VPC, networking, security groups, EC2 Auto Scaling infrastructure, ALB, and ACM certificate.
+
+## Step 2 – Validate ACM Certificate
+
+If DNS is managed externally (e.g., Squarespace):
+
+1. Copy the ACM DNS validation CNAME values from Terraform output.
+2. Create the CNAME record in your DNS provider.
+3. Wait for ACM status to become **Issued**.
+
+## Step 3 – Point Domain to ALB
+
+Create a CNAME record in your DNS provider:
+
+- Host: `credpal`
+- Value: `<alb_dns_name>`
+
+After DNS propagation, the application will be accessible at:
+
+```
+https://credpal.yourdomain.com
+```
+
+---
+
+# 7. Zero-Downtime Deployment Strategy
 
 Zero downtime is achieved using:
 
-- ECS rolling deployment
-- Desired task count ≥ 2
-- ALB health checks on `/health`
-- Deployment settings:
-  - `minimum_healthy_percent = 100`
-  - `maximum_percent = 200`
+- Auto Scaling Group rolling instance refresh  
+- Desired capacity ≥ 2 instances  
+- ALB health checks on `/health`  
+- Rolling update strategy  
 
 Deployment flow:
 
-1. New task version is launched.
-2. ALB health checks validate new tasks.
-3. Traffic is routed only to healthy tasks.
-4. Old tasks are drained and stopped.
+1. Launch template is updated (e.g., new image version).  
+2. ASG launches new EC2 instances.  
+3. ALB validates new instances via `/health`.  
+4. Traffic shifts only to healthy instances.  
+5. Old instances are terminated once replacements are healthy.  
 
-Users never experience downtime during deployment.
+Users experience no downtime during deployments.
 
 ---
 
-# 6. Security Decisions
+# 8. Manual Approval for Production Deployment
+
+The deployment workflow uses GitHub’s protected `production` environment.
+
+Environment protection rules:
+
+- Require manual approval before deployment  
+- Prevent automatic production changes  
+
+When the deployment workflow is triggered, it pauses until approval is granted.
+
+This satisfies the requirement for manual production approval.
+
+---
+
+# 9. Security Decisions
 
 ## Secrets Management
 
-- No application secrets are committed to the repository.
-- Runtime secrets are intended to be stored in:
-  - AWS Secrets Manager, or
-  - AWS SSM Parameter Store
-- Secrets are injected into ECS task definitions at runtime.
-- No long-lived AWS credentials are stored in code.
-
-## Container Security
-
-- Multi-stage Docker build reduces attack surface.
-- Application runs as a **non-root user** inside the container.
-- Only required runtime files are included in final image.
-- Docker HEALTHCHECK is implemented.
+- No secrets are committed to the repository.  
+- AWS credentials are stored in GitHub Actions Secrets.  
+- In a production environment, application secrets would be stored in:
+  - AWS Secrets Manager  
+  - AWS SSM Parameter Store  
 
 ## Network Security
 
-- Only ALB is publicly accessible (ports 80/443).
-- ECS tasks accept traffic only from ALB security group.
-- No direct public access to containers.
+- Only ALB exposes ports 80 and 443 publicly.  
+- EC2 instances accept traffic only from ALB security group.  
+- Instances reside in private subnets.  
+
+## Container Security
+
+- Non-root user inside container  
+- Multi-stage build reduces attack surface  
+- Dev dependencies excluded from runtime image  
+- Docker `HEALTHCHECK` implemented  
 
 ## HTTPS
 
-- TLS termination handled by Application Load Balancer.
-- SSL certificate provisioned via AWS Certificate Manager (ACM).
+- TLS termination handled by ALB  
+- Certificate provisioned using AWS Certificate Manager (ACM)  
 
 ---
 
-# 7. Infrastructure Design Decisions
-
-## Why ECS Fargate?
-
-ECS Fargate was selected instead of EC2 because:
-
-- No server management required
-- Built-in rolling deployments
-- Simplified scaling
-- Cleaner production-ready container orchestration
-
-## Why Application Load Balancer?
-
-- Enables HTTPS
-- Provides health checks
-- Supports zero-downtime routing
-- Distributes traffic across tasks
-
-## Why Multi-Stage Docker Build?
-
-- Smaller runtime image
-- Clear separation of build and runtime layers
-- Reduced security exposure
-
----
-
-# 8. Observability
+# 10. Observability
 
 ## Logging
 
 The application logs:
 
-- Server startup events
-- HTTP request logs (via Morgan)
-- Errors and Redis connectivity issues
+- HTTP requests (via Morgan)  
+- Startup events  
+- Error conditions  
 
 Logs are written to stdout/stderr.
 
-In ECS, logs are forwarded to CloudWatch Logs.
+On EC2, Docker forwards logs to system logs. In a production-grade system, logs would typically be forwarded to CloudWatch.
 
 ## Health Monitoring
 
 Health validation exists at multiple layers:
 
-- Application endpoint `/health`
-- Docker container HEALTHCHECK
-- ALB target group health check
-- ECS service health validation
+- `/health` endpoint  
+- Docker `HEALTHCHECK`  
+- ALB target group health check  
+- ASG health evaluation  
+
+Unhealthy instances are automatically replaced by the Auto Scaling Group.
 
 ---
 
-# 9. Local vs Production Architecture
+# 11. Local vs Production Architecture
 
 ## Local Development
 
-- Docker Compose
-- Node.js container
-- Redis container
+- Docker Compose  
+- Node.js container  
+- Redis container  
 
 ## Production
 
-- ECS Fargate
-- Application Load Balancer (HTTPS)
-- ACM certificate
-- Secrets Manager for runtime secrets
+- EC2 Auto Scaling Group  
+- Launch Template  
+- Application Load Balancer (HTTPS)  
+- ACM certificate  
+- Rolling instance refresh  
 
 Redis is used locally for simplicity.  
 In production, a managed service such as Amazon ElastiCache would be recommended if persistence or scaling were required.
 
 ---
 
-# 10. Summary
+# 12. Summary
 
 This implementation demonstrates:
 
-- Secure containerization
-- Automated CI/CD
-- Infrastructure as Code using Terraform
-- HTTPS-enabled cloud deployment
-- Rolling, zero-downtime deployments
-- Secure secret handling practices
-- Basic logging and health monitoring
+- Secure containerization  
+- Automated CI/CD pipeline  
+- Infrastructure as Code using Terraform  
+- HTTPS-enabled cloud deployment  
+- Zero-downtime rolling deployments  
+- Manual production approval  
+- Secure secret handling practices  
+- Basic logging and health monitoring  
 
-The solution focuses on clarity, production readiness, and alignment with modern DevOps best practices while keeping the application intentionally simple.
+The solution focuses on clarity, operational correctness, and production readiness while keeping the application intentionally simple..

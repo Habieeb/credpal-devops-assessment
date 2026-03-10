@@ -274,10 +274,11 @@ This satisfies the requirement for manual production approval.
 
 # 9. Security Decisions
 
+- The infrastructure uses layered network security through VPC subnet separation and security groups. The ALB is publicly accessible on ports 80 and 443, while EC2 instances are isolated in private subnets and only accept application traffic from the ALB security group. Additional services such as AWS WAF or GuardDuty could be added as future enhancements, but were not required for this assessment.
+
 ## Secrets Management
 
-- No secrets are committed to the repository.  
-- AWS credentials are stored in GitHub Actions Secrets.  
+- No secrets are committed to the repository.    
 - In a production environment, application secrets would be stored in:
   - AWS Secrets Manager  
   - AWS SSM Parameter Store  

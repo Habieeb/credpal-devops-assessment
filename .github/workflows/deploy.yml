@@ -1,4 +1,4 @@
-name: Deploy to ECS
+name: Deploy Infrastructure
 
 on:
   workflow_dispatch:
@@ -9,34 +9,34 @@ jobs:
     environment: production
 
     permissions:
-      id-token: write
       contents: read
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
 
-      - name: Download current task definition
-        run: |
-          aws ecs describe-task-definition \
-            --task-definition ${{ secrets.ECS_TASK_DEFINITION_FAMILY }} \
-            --query taskDefinition > task-definition.json
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-      - name: Render new task definition
-        id: render-task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: app
-          image: ghcr.io/${{ github.repository_owner }}/credpal-devops-assessment:${{ github.sha }}
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
 
-      - name: Deploy ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-        with:
-          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
-          service: ${{ secrets.ECS_SERVICE_NAME }}
-          cluster: ${{ secrets.ECS_CLUSTER_NAME }}
-          wait-for-service-stability: true
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve

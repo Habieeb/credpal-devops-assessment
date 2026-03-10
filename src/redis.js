@@ -9,7 +9,7 @@ async function getRedisClient() {
     });
 
     client.on("error", (err) => {
-      console.error("Redis Client Error", err);
+      console.error("Redis Client Error:", err.message);
     });
 
     await client.connect();

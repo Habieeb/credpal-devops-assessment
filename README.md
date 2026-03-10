@@ -231,7 +231,7 @@ Create a CNAME record in your DNS provider:
 After DNS propagation, the application will be accessible at:
 
 ```
-https://credpal.yourdomain.com
+https://credpal.sydatrix.com
 ```
 
 ---

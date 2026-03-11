@@ -25,3 +25,7 @@ output "acm_validation_type" {
 output "acm_validation_value" {
   value = tolist(aws_acm_certificate.cert.domain_validation_options)[0].resource_record_value
 }
+
+output "redis_endpoint" {
+  value = aws_elasticache_replication_group.redis.primary_endpoint_address
+}

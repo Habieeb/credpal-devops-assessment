@@ -103,17 +103,19 @@ resource "aws_launch_template" "app" {
     dnf install -y docker
     systemctl enable docker
     systemctl start docker
+    usermod -aG docker ec2-user
 
     docker pull ghcr.io/habieeb/credpal-devops-assessment:latest
 
-    docker rm -f app || true
+    docker rm -f credpal-app || true
 
     docker run -d \
-      --name app \
+      --name credpal-app \
       --restart unless-stopped \
       -p ${var.container_port}:${var.container_port} \
       -e PORT=${var.container_port} \
       -e NODE_ENV=production \
+      -e REDIS_URL=redis://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379 \
       ghcr.io/habieeb/credpal-devops-assessment:latest
   EOF
   )
@@ -147,7 +149,6 @@ resource "aws_autoscaling_group" "app" {
     preferences {
       min_healthy_percentage = 50
     }
-
   }
 
   depends_on = [aws_lb_listener.https]

@@ -104,7 +104,6 @@ resource "aws_launch_template" "app" {
     PORT="${var.container_port}"
     REDIS_URL="redis://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379"
 
-    dnf update -y
     dnf install -y docker
     systemctl enable docker
     systemctl start docker
@@ -119,23 +118,34 @@ resource "aws_launch_template" "app" {
     PORT="${var.container_port}"
     REDIS_URL="redis://${aws_elasticache_replication_group.redis.primary_endpoint_address}:6379"
 
-    current_container_image_id=$$(docker inspect "$${CONTAINER_NAME}" --format '{{.Image}}' 2>/dev/null || true)
-
-    docker pull "$${IMAGE}" >/dev/null
+    for i in {1..5}; do
+      if docker pull "$${IMAGE}"; then
+        break
+      fi
+      sleep 15
+    done
 
     latest_image_id=$$(docker image inspect "$${IMAGE}" --format '{{.Id}}')
+    current_container_image_id=$$(docker inspect "$${CONTAINER_NAME}" --format '{{.Image}}' 2>/dev/null || true)
 
     if [ -z "$${current_container_image_id}" ] || [ "$${current_container_image_id}" != "$${latest_image_id}" ]; then
       docker rm -f "$${CONTAINER_NAME}" 2>/dev/null || true
 
-      docker run -d \
-        --name "$${CONTAINER_NAME}" \
-        --restart unless-stopped \
-        -p "$${PORT}:$${PORT}" \
-        -e PORT="$${PORT}" \
-        -e NODE_ENV=production \
-        -e REDIS_URL="$${REDIS_URL}" \
-        "$${IMAGE}"
+      for i in {1..3}; do
+        if docker run -d \
+          --name "$${CONTAINER_NAME}" \
+          --restart unless-stopped \
+          -p "$${PORT}:$${PORT}" \
+          -e PORT="$${PORT}" \
+          -e NODE_ENV=production \
+          -e REDIS_URL="$${REDIS_URL}" \
+          "$${IMAGE}"; then
+          exit 0
+        fi
+        sleep 10
+      done
+
+      exit 1
     fi
     SCRIPT
 
@@ -144,8 +154,9 @@ resource "aws_launch_template" "app" {
     cat >/etc/systemd/system/credpal-app-updater.service <<'SERVICE'
     [Unit]
     Description=Update CredPal app container if a newer image is available
-    After=docker.service
+    After=docker.service network-online.target
     Requires=docker.service
+    Wants=network-online.target
 
     [Service]
     Type=oneshot
@@ -157,7 +168,7 @@ resource "aws_launch_template" "app" {
     Description=Run CredPal app updater every 5 minutes
 
     [Timer]
-    OnBootSec=30s
+    OnBootSec=60s
     OnUnitActiveSec=5min
     Unit=credpal-app-updater.service
 
@@ -206,3 +217,4 @@ resource "aws_autoscaling_group" "app" {
 
   depends_on = [aws_lb_listener.https]
 }
+

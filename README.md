@@ -25,7 +25,7 @@ The application runs on **port 3000** and exposes three endpoints:
 - `GET /status`
 - `POST /process`
 
-Redis is used locally for lightweight state tracking.
+Redis is used for request state tracking. In local development it runs through Docker Compose, while in production the application connects to Amazon ElastiCache Redis.
 
 ## Endpoints
 
@@ -169,27 +169,30 @@ Infrastructure is provisioned using Terraform.
 
 ## Provisioned Components
 
-- VPC  
-- Public and private subnets  
-- Internet Gateway  
-- NAT Gateway (for private subnet outbound access)  
-- Security Groups  
-- EC2 Launch Template  
-- Auto Scaling Group (ASG)  
-- Application Load Balancer (ALB)  
-- Target Group  
-- ACM SSL certificate  
+- VPC
+- Public and private subnets
+- Internet Gateway
+- NAT Gateway (for private subnet outbound access)
+- Security Groups
+- EC2 Launch Template
+- Auto Scaling Group (ASG)
+- Application Load Balancer (ALB)
+- Target Group
+- ACM SSL certificate
+- Amazon ElastiCache Redis
 
 ## Architecture Overview
 
 - ALB runs in **public subnets**
 - EC2 instances run in **private subnets**
+- Amazon ElastiCache Redis runs in **private subnets**
 - Only ALB is publicly accessible
 - EC2 instances pull container images from GHCR
-- Docker runs the container on port 3000
-- ALB forwards HTTPS traffic to instances
+- Docker runs the application container on port 3000
+- The application connects to ElastiCache Redis using the Redis endpoint
+- ALB forwards HTTPS traffic to EC2 instances
 
-This ensures controlled network exposure and separation of public and private layers.
+This design provides HTTPS termination, shared Redis state across instances, and network isolation between public and private application components.
 
 ---
 
@@ -211,8 +214,8 @@ terraform plan
 terraform apply
 ```
 
-Terraform provisions the VPC, networking, security groups, EC2 Auto Scaling infrastructure, ALB, and ACM certificate.
-
+Terraform provisions the VPC, networking, security groups, EC2 Auto Scaling infrastructure, ALB, ACM certificate, and Amazon ElastiCache Redis.
+The application instances are configured with the ElastiCache Redis endpoint through environment variables during instance startup.
 ## Step 2 – Validate ACM Certificate
 
 If DNS is managed externally (e.g., Squarespace):
@@ -285,9 +288,10 @@ This satisfies the requirement for manual production approval.
 
 ## Network Security
 
-- Only ALB exposes ports 80 and 443 publicly.  
-- EC2 instances accept traffic only from ALB security group.  
-- Instances reside in private subnets.  
+- Only ALB exposes ports 80 and 443 publicly.
+- EC2 instances accept traffic only from the ALB security group.
+- Amazon ElastiCache Redis accepts traffic only from the EC2 application security group on port 6379.
+- EC2 instances and Redis reside in private subnets.
 
 ## Container Security
 
@@ -334,20 +338,20 @@ Unhealthy instances are automatically replaced by the Auto Scaling Group.
 
 ## Local Development
 
-- Docker Compose  
-- Node.js container  
-- Redis container  
+- Docker Compose
+- Node.js container
+- Redis container
 
 ## Production
 
-- EC2 Auto Scaling Group  
-- Launch Template  
-- Application Load Balancer (HTTPS)  
-- ACM certificate  
-- Rolling instance refresh  
+- EC2 Auto Scaling Group
+- Launch Template
+- Application Load Balancer (HTTPS)
+- ACM certificate
+- Amazon ElastiCache Redis
+- Rolling instance refresh
 
-Redis is used locally for simplicity.  
-In production, a managed service such as Amazon ElastiCache would be recommended if persistence or scaling were required.
+In local development, Redis runs as a Docker Compose service alongside the application. In production, the application connects to a shared Amazon ElastiCache Redis instance so that request state is consistent across multiple EC2 instances behind the load balancer.
 
 ---
 
@@ -364,4 +368,4 @@ This implementation demonstrates:
 - Secure secret handling practices  
 - Basic logging and health monitoring  
 
-The solution focuses on clarity, operational correctness, and production readiness while keeping the application intentionally simple.
+The solution focuses on clarity, operational correctness, and production readiness while keeping the application intentionally simple. Local development uses Docker Compose with Redis, while production uses Amazon ElastiCache Redis to provide shared state across multiple EC2 instances.
